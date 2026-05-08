@@ -115,14 +115,15 @@ ACTIVITY_TYPE_MAP = {
     "HKWorkoutActivityTypeOther": "Other",
 }
 
-# FIT sport codes matching COROS internal values
-FIT_SPORT_CODES: dict[str, int] = {
-    "HKWorkoutActivityTypeRunning": 1,     # RUNNING
-    "HKWorkoutActivityTypeCycling": 2,     # CYCLING
-    "HKWorkoutActivityTypeWalking": 11,    # WALKING
-    "HKWorkoutActivityTypeHiking": 17,     # HIKING (COROS code)
-    "HKWorkoutActivityTypeSwimming": 5,    # SWIMMING
+# FIT sport codes and names matching COROS internal values
+_FIT_SPORT: dict[str, tuple[int, str]] = {
+    "HKWorkoutActivityTypeRunning": (1, "running"),
+    "HKWorkoutActivityTypeCycling": (2, "cycling"),
+    "HKWorkoutActivityTypeWalking": (11, "walking"),
+    "HKWorkoutActivityTypeHiking": (17, "hiking"),
+    "HKWorkoutActivityTypeSwimming": (5, "swimming"),
 }
+_FIT_SPORT_DEFAULT = (0, "generic")
 
 MIN_DURATION_S = 60
 MIN_DISTANCE_M = 50
@@ -839,7 +840,9 @@ def generate_fit_bytes(workout: WorkoutInfo) -> Optional[bytes]:
     if not merged:
         return None
 
-    sport_code = FIT_SPORT_CODES.get(workout.activity_type, 0)
+    sport_code, sport_name = _FIT_SPORT.get(
+        workout.activity_type, _FIT_SPORT_DEFAULT
+    )
     # garmin-fit-sdk Encoder expects FIT epoch seconds (since 1989-12-31)
     FIT_EPOCH = 631065600
     start_fit = int(workout.start_ts) - FIT_EPOCH
@@ -973,7 +976,7 @@ def generate_fit_bytes(workout: WorkoutInfo) -> Optional[bytes]:
         'total_timer_time': workout.duration_s,
         'total_distance': total_dist,
         'total_calories': int(workout.energy_kcal),
-        'sport': 'hiking' if sport_code == 17 else 'generic',
+        'sport': sport_name,
         'avg_speed': avg_speed,
         'max_speed': max_speed_val,
         'avg_cadence': 0,
@@ -999,7 +1002,7 @@ def generate_fit_bytes(workout: WorkoutInfo) -> Optional[bytes]:
         'total_timer_time': workout.duration_s,
         'total_distance': total_dist,
         'total_calories': int(workout.energy_kcal),
-        'sport': 'hiking' if sport_code == 17 else 'generic',
+        'sport': sport_name,
         'avg_speed': avg_speed,
         'max_speed': max_speed_val,
         'avg_cadence': 0,
