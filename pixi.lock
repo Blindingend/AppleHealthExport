@@ -40,6 +40,8 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/e6/5e/3b5277a13e470c83e6903a4fe3527fd52c857f922c7d26f9466508096c4a/bitstruct-8.22.1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/25/ca/20fe2dc451a3e22c483659a511a71a31c29a6569610a3e14c5a6cb712673/fit_tool-0.9.15-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/61/ed/5637fe96c56d55dfa6317ab16745f9a83ef2690d093cee8f0b59f983675f/fitparse-1.2.0.tar.gz
+      - pypi: https://files.pythonhosted.org/packages/db/f1/8e877276855f0c0556b67a97fb509f65952db95f2e95789bc00b5624a7b1/garmin_fit_sdk-21.202.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
@@ -96,6 +98,19 @@ packages:
   - pytest>=7.0 ; extra == 'test'
   - pytest-cov>=4.0 ; extra == 'test'
   requires_python: '>=3.8'
+- pypi: https://files.pythonhosted.org/packages/61/ed/5637fe96c56d55dfa6317ab16745f9a83ef2690d093cee8f0b59f983675f/fitparse-1.2.0.tar.gz
+  name: fitparse
+  version: 1.2.0
+  sha256: 2d691022452dea6dabad13cc6e017ca467fe8a3a895cd3ac67a50a7bb716b4a9
+- pypi: https://files.pythonhosted.org/packages/db/f1/8e877276855f0c0556b67a97fb509f65952db95f2e95789bc00b5624a7b1/garmin_fit_sdk-21.202.0-py3-none-any.whl
+  name: garmin-fit-sdk
+  version: 21.202.0
+  sha256: 3b1071442d9b17615b78b95535d5ead47c05cee8e386d96179fedea0519d5d45
+  requires_dist:
+  - pytest~=7.0.1 ; extra == 'dev'
+  - pytest-cov~=3.0.0 ; extra == 'dev'
+  - pytest-mock~=3.6.1 ; extra == 'dev'
+  requires_python: '>=3.6'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/icu-78.3-h33c6efd_0.conda
   sha256: fbf86c4a59c2ed05bbffb2ba25c7ed94f6185ec30ecb691615d42342baa1a16a
   md5: c80d8a3b84358cb967fa81e7075fbc8a

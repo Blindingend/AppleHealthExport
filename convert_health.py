@@ -31,17 +31,31 @@ from itertools import groupby
 
 from lxml import etree
 
-# FIT file generation
-from fit_tool.fit_file_builder import FitFileBuilder
-from fit_tool.profile.messages.file_id_message import FileIdMessage
-from fit_tool.profile.messages.record_message import RecordMessage
-from fit_tool.profile.messages.session_message import SessionMessage
-from fit_tool.profile.messages.lap_message import LapMessage
-from fit_tool.profile.messages.activity_message import ActivityMessage
-from fit_tool.profile.messages.event_message import EventMessage
-from fit_tool.profile.messages.device_info_message import DeviceInfoMessage
-from fit_tool.profile.messages.developer_data_id_message import DeveloperDataIdMessage
-from fit_tool.profile.profile_type import Sport, Event, EventType, FileType, Manufacturer
+# FIT file generation via official Garmin SDK (profile 211.58, protocol 2.0)
+from garmin_fit_sdk import Encoder
+
+# Garmin CRC-16 table
+_CRC_TABLE = [
+    0x0000,0xCC01,0xD801,0x1400,0xF001,0x3C00,0x2800,0xE401,
+    0xA001,0x6C00,0x7800,0xB401,0x5000,0x9C01,0x8801,0x4400,
+]
+def _crc16(data: bytes) -> int:
+    crc = 0
+    for byte in data:
+        tmp = _CRC_TABLE[crc & 0xF]
+        crc = (crc >> 4) & 0x0FFF
+        crc = crc ^ tmp ^ _CRC_TABLE[byte & 0xF]
+        tmp = _CRC_TABLE[crc & 0xF]
+        crc = (crc >> 4) & 0x0FFF
+        crc = crc ^ tmp ^ _CRC_TABLE[(byte >> 4) & 0xF]
+    return crc
+
+# garmin-fit-sdk message type → FIT mesg_num
+_MESG_NUM = {
+    'file_id': 0, 'developer_data_id': 207, 'device_info': 23,
+    'activity': 34, 'event': 21, 'record': 20,
+    'lap': 19, 'session': 18,
+}
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -101,13 +115,13 @@ ACTIVITY_TYPE_MAP = {
     "HKWorkoutActivityTypeOther": "Other",
 }
 
-# FIT sport codes match COROS internal values (verified against COROS export)
-FIT_SPORT_MAP: dict[str, Sport] = {
-    "HKWorkoutActivityTypeRunning": Sport.RUNNING,
-    "HKWorkoutActivityTypeCycling": Sport.CYCLING,
-    "HKWorkoutActivityTypeWalking": Sport.WALKING,
-    "HKWorkoutActivityTypeHiking": Sport.HIKING,
-    "HKWorkoutActivityTypeSwimming": Sport.SWIMMING,
+# FIT sport codes matching COROS internal values
+FIT_SPORT_CODES: dict[str, int] = {
+    "HKWorkoutActivityTypeRunning": 1,     # RUNNING
+    "HKWorkoutActivityTypeCycling": 2,     # CYCLING
+    "HKWorkoutActivityTypeWalking": 11,    # WALKING
+    "HKWorkoutActivityTypeHiking": 17,     # HIKING (COROS code)
+    "HKWorkoutActivityTypeSwimming": 5,    # SWIMMING
 }
 
 MIN_DURATION_S = 60
@@ -804,11 +818,10 @@ def _is_sequential_segments(segments: list[SegmentInfo]) -> bool:
 
 
 def generate_fit_bytes(workout: WorkoutInfo) -> Optional[bytes]:
-    """Generate a FIT file (binary) from a workout.
+    """Generate a COROS-compatible FIT file from a workout.
 
-    Returns the FIT file bytes, or None if there is no data to write.
-    FIT format uses well-defined sport type enums that COROS recognises
-    natively — avoiding the TCX Sport-attribute mapping issues.
+    Uses Garmin's official FIT SDK encoder with profile 211.58 / protocol 2.0
+    to match COROS device output.
     """
     # Filter GPS points to active workout intervals
     buffered_intervals = [
@@ -826,75 +839,81 @@ def generate_fit_bytes(workout: WorkoutInfo) -> Optional[bytes]:
     if not merged:
         return None
 
-    sport = FIT_SPORT_MAP.get(workout.activity_type, Sport.GENERIC)
+    sport_code = FIT_SPORT_CODES.get(workout.activity_type, 0)
+    # garmin-fit-sdk Encoder expects FIT epoch seconds (since 1989-12-31)
+    FIT_EPOCH = 631065600
+    start_fit = int(workout.start_ts) - FIT_EPOCH
+    end_fit = int(workout.end_ts) - FIT_EPOCH
 
-    # Timestamps — FIT uses milliseconds since Unix epoch
-    start_ms = int(workout.start_ts * 1000)
-    end_ms = int(workout.end_ts * 1000)
+    # ------------------------------------------------------------------
+    # Build messages as dicts (garmin-fit-sdk Encoder format)
+    # ------------------------------------------------------------------
 
-    builder = FitFileBuilder(auto_define=True)
-
-    # Message order must match COROS reference exactly:
-    #   file_id → developer_data_id → device_info → activity →
-    #   event(start) → event(stop) → records → lap → session
+    messages: list[dict] = []
 
     # --- FileId ---
-    fid = FileIdMessage()
-    fid.type = FileType.ACTIVITY
-    fid.manufacturer = Manufacturer.DEVELOPMENT
-    fid.time_created = end_ms
-    fid.product = 0
-    fid.product_name = "Apple Watch"
-    builder.add(fid)
+    messages.append({
+        'mesg_num': 0,
+        'type': 'activity',
+        'manufacturer': 'development',
+        'time_created': end_fit,
+        'product': 0,
+        'product_name': 'Apple Watch',
+    })
 
     # --- DeveloperDataId ---
-    dev_data = DeveloperDataIdMessage()
-    dev_data.manufacturer_id = Manufacturer.DEVELOPMENT
-    dev_data.developer_data_index = 0
-    dev_data.application_id = bytes(16)
-    builder.add(dev_data)
+    messages.append({
+        'mesg_num': 207,
+        'manufacturer_id': 255,  # development
+        'developer_data_index': 0,
+        'application_id': [0]*16,
+    })
 
     # --- DeviceInfo ---
-    dev = DeviceInfoMessage()
-    dev.timestamp = end_ms
-    dev.manufacturer = Manufacturer.DEVELOPMENT
-    dev.product_name = "Apple Health Export"
-    builder.add(dev)
+    messages.append({
+        'mesg_num': 23,
+        'timestamp': end_fit,
+        'manufacturer': 'development',
+        'product_name': 'Apple Health Export',
+    })
 
     # --- Activity ---
-    act = ActivityMessage()
-    act.timestamp = start_ms
-    act.total_timer_time = workout.duration_s
-    act.num_sessions = 1
-    act.type = 1  # manual
-    act.event = 26  # activity
-    act.event_type = 1  # stop
-    builder.add(act)
+    messages.append({
+        'mesg_num': 34,
+        'timestamp': start_fit,
+        'total_timer_time': workout.duration_s,
+        'local_timestamp': start_fit,
+        'num_sessions': 1,
+        'type': 'auto_multi_sport',
+        'event': 'activity',
+        'event_type': 'stop',
+    })
 
-    # --- Timer start event ---
-    ev_start = EventMessage()
-    ev_start.timestamp = start_ms
-    ev_start.event = Event.TIMER
-    ev_start.event_type = EventType.START
-    ev_start.event_group = 0
-    builder.add(ev_start)
+    # --- Event: timer start ---
+    messages.append({
+        'mesg_num': 21,
+        'timestamp': start_fit,
+        'event': 'timer',
+        'event_type': 'start',
+        'event_group': 0,
+    })
 
-    # --- Timer stop event ---
-    ev_stop = EventMessage()
-    ev_stop.timestamp = end_ms
-    ev_stop.event = Event.TIMER
-    ev_stop.event_type = EventType.STOP_ALL
-    ev_stop.event_group = 0
-    builder.add(ev_stop)
+    # --- Event: timer stop ---
+    messages.append({
+        'mesg_num': 21,
+        'timestamp': end_fit,
+        'event': 'timer',
+        'event_type': 'stop_all',
+        'event_group': 0,
+    })
 
-    # --- Records (one per second, 1 Hz) ---
-    # Down-sample to ~1 Hz: keep the first point per whole-second bucket
+    # --- Records (1 Hz) ---
     last_sec = -1
     hr_vals: list[float] = []
     cumulative_dist = 0.0
     prev_lat = None
     prev_lon = None
-    invalid_pos = (179.99999991618097, 179.99999991618097)  # COROS sentinel
+    is_first = True
 
     for pt in merged:
         sec = int(pt.ts)
@@ -902,102 +921,127 @@ def generate_fit_bytes(workout: WorkoutInfo) -> Optional[bytes]:
             continue
         last_sec = sec
 
-        rec = RecordMessage()
-        rec.timestamp = int(pt.ts * 1000)
-        rec.activity_type = sport.value  # COROS uses sport code as activity_type
+        rec: dict = {
+            'mesg_num': 20,
+            'timestamp': int(pt.ts) - FIT_EPOCH,
+            'activity_type': sport_code,
+        }
+
+        if is_first:
+            is_first = False
+            rec['distance'] = 0.0
+            if pt.hr is not None:
+                hr_vals.append(pt.hr)
+            messages.append(rec)
+            continue
 
         if pt.lat is not None and pt.lon is not None:
-            rec.position_lat = pt.lat
-            rec.position_long = pt.lon
+            rec['position_lat'] = int(pt.lat * (2**31) / 180)
+            rec['position_long'] = int(pt.lon * (2**31) / 180)
             if prev_lat is not None:
                 cumulative_dist += _haversine(prev_lat, prev_lon, pt.lat, pt.lon)
             prev_lat, prev_lon = pt.lat, pt.lon
-        elif prev_lat is not None:
-            # No GPS at this point — use COROS sentinel
-            rec.position_lat = invalid_pos[0]
-            rec.position_long = invalid_pos[1]
 
-        rec.distance = cumulative_dist
+        rec['distance'] = cumulative_dist
 
         if pt.hr is not None:
-            rec.heart_rate = int(round(pt.hr))
+            rec['heart_rate'] = int(round(pt.hr))
             hr_vals.append(pt.hr)
 
         if pt.ele is not None:
-            rec.altitude = pt.ele
+            rec['altitude'] = pt.ele
 
-        if pt.speed is not None and pt.speed >= 0:
-            rec.speed = pt.speed
+        if pt.speed is not None and 0 <= pt.speed <= 50:
+            rec['speed'] = pt.speed
 
-        builder.add(rec)
+        messages.append(rec)
 
     # --- Lap ---
-    # Use Apple Health recorded distance as floor; GPS-calculated may be 0
-    # when no GPS track exists (indoor/no-route workouts).
     total_dist = cumulative_dist if cumulative_dist > 0 else workout.distance_m
     avg_speed = total_dist / workout.duration_s if workout.duration_s > 0 else 0
-    max_speed_val = max((pt.speed for pt in merged if pt.speed), default=0)
+    max_speed_val = min(
+        max((pt.speed for pt in merged if pt.speed), default=0), 50.0
+    )
+    ascent = int(workout.elevation_gain_m) if workout.elevation_gain_m > 0 else 0
 
-    lap = LapMessage()
-    lap.message_index = 0
-    lap.timestamp = end_ms
-    lap.start_time = start_ms
-    lap.total_elapsed_time = workout.duration_s
-    lap.total_timer_time = workout.duration_s
-    lap.total_distance = total_dist
-    lap.total_calories = int(workout.energy_kcal)
-    lap.sport = sport
-    lap.avg_speed = avg_speed
-    lap.max_speed = max_speed_val
-    lap.avg_cadence = 0
-    lap.max_cadence = 0
-    lap.avg_power = 0
-    lap.avg_stance_time = 0.0
-    lap.avg_stance_time_percent = 0.0
-    lap.avg_step_length = 0.0
-    lap.avg_vertical_oscillation = 0.0
-    lap.avg_vertical_ratio = 0.0
+    lap: dict = {
+        'mesg_num': 19,
+        'message_index': 0,
+        'timestamp': end_fit,
+        'start_time': start_fit,
+        'total_elapsed_time': workout.duration_s,
+        'total_timer_time': workout.duration_s,
+        'total_distance': total_dist,
+        'total_calories': int(workout.energy_kcal),
+        'sport': 'hiking' if sport_code == 17 else 'generic',
+        'avg_speed': avg_speed,
+        'max_speed': max_speed_val,
+        'avg_cadence': 0,
+        'max_cadence': 0,
+        'avg_power': 0,
+        'total_ascent': ascent,
+        'total_descent': ascent,  # must be non-zero when ascent > 0
+    }
     if hr_vals:
-        lap.avg_heart_rate = int(round(sum(hr_vals) / len(hr_vals)))
-        lap.max_heart_rate = int(round(max(hr_vals)))
-        lap.min_heart_rate = int(round(min(hr_vals)))
-    if workout.elevation_gain_m > 0:
-        lap.total_ascent = int(workout.elevation_gain_m)
+        lap['avg_heart_rate'] = int(round(sum(hr_vals) / len(hr_vals)))
+        lap['max_heart_rate'] = int(round(max(hr_vals)))
+        lap['min_heart_rate'] = int(round(min(hr_vals)))
     if workout.weather_temp_f is not None:
-        lap.avg_temperature = int(round((workout.weather_temp_f - 32) * 5 / 9))
-    builder.add(lap)
+        lap['avg_temperature'] = int(round((workout.weather_temp_f - 32) * 5 / 9))
+    messages.append(lap)
 
     # --- Session ---
-    sess = SessionMessage()
-    sess.timestamp = end_ms
-    sess.start_time = start_ms
-    sess.total_elapsed_time = workout.duration_s
-    sess.total_timer_time = workout.duration_s
-    sess.total_distance = total_dist
-    sess.total_calories = int(workout.energy_kcal)
-    sess.sport = sport
-    sess.avg_speed = avg_speed
-    sess.max_speed = max_speed_val
-    sess.avg_cadence = 0
-    sess.max_cadence = 0
-    sess.avg_power = 0
-    sess.avg_stance_time = 0.0
-    sess.avg_stance_time_balance = 0.0
-    sess.avg_step_length = 0.0
-    sess.avg_vertical_oscillation = 0.0
-    sess.avg_vertical_ratio = 0.0
+    sess: dict = {
+        'mesg_num': 18,
+        'timestamp': end_fit,
+        'start_time': start_fit,
+        'total_elapsed_time': workout.duration_s,
+        'total_timer_time': workout.duration_s,
+        'total_distance': total_dist,
+        'total_calories': int(workout.energy_kcal),
+        'sport': 'hiking' if sport_code == 17 else 'generic',
+        'avg_speed': avg_speed,
+        'max_speed': max_speed_val,
+        'avg_cadence': 0,
+        'max_cadence': 0,
+        'avg_power': 0,
+        'total_ascent': ascent,
+        'total_descent': ascent,  # consistent with lap
+    }
     if hr_vals:
-        sess.avg_heart_rate = int(round(sum(hr_vals) / len(hr_vals)))
-        sess.max_heart_rate = int(round(max(hr_vals)))
-        sess.min_heart_rate = int(round(min(hr_vals)))
-    if workout.elevation_gain_m > 0:
-        sess.total_ascent = int(workout.elevation_gain_m)
+        sess['avg_heart_rate'] = int(round(sum(hr_vals) / len(hr_vals)))
+        sess['max_heart_rate'] = int(round(max(hr_vals)))
+        sess['min_heart_rate'] = int(round(min(hr_vals)))
     if workout.weather_temp_f is not None:
-        sess.avg_temperature = int(round((workout.weather_temp_f - 32) * 5 / 9))
-    builder.add(sess)
+        sess['avg_temperature'] = int(round((workout.weather_temp_f - 32) * 5 / 9))
+    messages.append(sess)
 
-    fit_file = builder.build()
-    return fit_file.to_bytes()
+    # ------------------------------------------------------------------
+    # Encode with Garmin SDK, patch profile to 211.58, fix CRCs
+    # ------------------------------------------------------------------
+    encoder = Encoder()
+    for msg in messages:
+        encoder.write_mesg(msg)
+    data = bytearray(encoder.close())
+
+    # Patch profile version → 211.58 (COROS exact match)
+    # 21158 = 0x52A6, little-endian: A6 52
+    data[2] = 0xA6
+    data[3] = 0x52
+
+    # Recompute header CRC over bytes 0-11
+    hdr_crc = _crc16(data[:12])
+    data[12] = hdr_crc & 0xFF
+    data[13] = (hdr_crc >> 8) & 0xFF
+
+    # Recompute file CRC over bytes after header, excluding CRC
+    hdr_sz = data[0]
+    if len(data) > hdr_sz + 2:
+        file_crc = _crc16(data[hdr_sz:-2])
+        data[-2] = file_crc & 0xFF
+        data[-1] = (file_crc >> 8) & 0xFF
+
+    return bytes(data)
 
 
 def _generate_fit_filename(workout: WorkoutInfo, file_index: int) -> str:
