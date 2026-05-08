@@ -151,6 +151,28 @@ _SPORT_MAP: dict[str, str] = {
     "HKWorkoutActivityTypeTennis": "tennis",
     "HKWorkoutActivityTypeBadminton": "tennis",       # closest available
     "HKWorkoutActivityTypeTableTennis": "tennis",      # closest available
+    # --- Best-effort mappings for types without direct FIT support ---
+    # Elliptical / indoor cardio
+    "HKWorkoutActivityTypeElliptical": "fitness_equipment",
+    # Yoga / Pilates / Flexibility → training
+    "HKWorkoutActivityTypeYoga": "training",
+    "HKWorkoutActivityTypePilates": "training",
+    "HKWorkoutActivityTypeFlexibility": "training",
+    # Dance / Cardio Dance
+    "HKWorkoutActivityTypeDance": "training",
+    "HKWorkoutActivityTypeCardioDance": "training",
+    "HKWorkoutActivityTypeMixedCardio": "training",
+    # Cooldown
+    "HKWorkoutActivityTypeCooldown": "training",
+    # Stairs
+    "HKWorkoutActivityTypeStairClimbing": "training",
+    "HKWorkoutActivityTypeStairs": "training",
+    # Gaming
+    "HKWorkoutActivityTypeFitnessGaming": "training",
+    # Team sports — COROS has soccer/tennis/basketball, rest → training
+    "HKWorkoutActivityTypeVolleyball": "training",
+    "HKWorkoutActivityTypeCricket": "training",
+    "HKWorkoutActivityTypeRugby": "training",
     # Everything else falls through to "generic"
 }
 _SPORT_DEFAULT = "generic"
