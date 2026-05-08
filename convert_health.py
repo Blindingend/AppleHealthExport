@@ -115,15 +115,64 @@ ACTIVITY_TYPE_MAP = {
     "HKWorkoutActivityTypeOther": "Other",
 }
 
-# FIT sport codes and names matching COROS internal values
-_FIT_SPORT: dict[str, tuple[int, str]] = {
-    "HKWorkoutActivityTypeRunning": (1, "running"),
-    "HKWorkoutActivityTypeCycling": (2, "cycling"),
-    "HKWorkoutActivityTypeWalking": (11, "walking"),
-    "HKWorkoutActivityTypeHiking": (17, "hiking"),
-    "HKWorkoutActivityTypeSwimming": (5, "swimming"),
+# Apple Health → FIT sport mapping.  Value is the garmin-fit-sdk sport string.
+# The Encoder converts strings to FIT sport codes internally.
+_SPORT_MAP: dict[str, str] = {
+    # Running
+    "HKWorkoutActivityTypeRunning": "running",
+    "HKWorkoutActivityTypeWheelchairRunPace": "running",
+    # Cycling
+    "HKWorkoutActivityTypeCycling": "cycling",
+    # Walking & Hiking
+    "HKWorkoutActivityTypeWalking": "walking",
+    "HKWorkoutActivityTypeWheelchairWalkPace": "walking",
+    "HKWorkoutActivityTypeHiking": "hiking",
+    # Swimming
+    "HKWorkoutActivityTypeSwimming": "swimming",
+    # Strength & Training
+    "HKWorkoutActivityTypeTraditionalStrengthTraining": "training",
+    "HKWorkoutActivityTypeFunctionalStrengthTraining": "training",
+    "HKWorkoutActivityTypeCoreTraining": "training",
+    "HKWorkoutActivityTypeCrossTraining": "training",
+    "HKWorkoutActivityTypeHighIntensityIntervalTraining": "training",
+    # Rowing
+    "HKWorkoutActivityTypeRowing": "rowing",
+    # Combat
+    "HKWorkoutActivityTypeBoxing": "boxing",
+    # Jump rope
+    "HKWorkoutActivityTypeJumpRope": "jump_rope",
+    # Climbing & Mountaineering
+    "HKWorkoutActivityTypeClimbing": "mountaineering",
+    # Snow sports
+    "HKWorkoutActivityTypeSnowboarding": "snowboarding",
+    # Ball / Court
+    "HKWorkoutActivityTypeBasketball": "basketball",
+    "HKWorkoutActivityTypeSoccer": "soccer",
+    "HKWorkoutActivityTypeTennis": "tennis",
+    "HKWorkoutActivityTypeBadminton": "tennis",       # closest available
+    "HKWorkoutActivityTypeTableTennis": "tennis",      # closest available
+    # Everything else falls through to "generic"
 }
-_FIT_SPORT_DEFAULT = (0, "generic")
+_SPORT_DEFAULT = "generic"
+
+# Sport → activity_type code used in per-second records (COROS-specific).
+# When COROS decodes records, it uses this field for per-second activity type.
+_ACTIVITY_TYPE_MAP: dict[str, int] = {
+    "running": 1,
+    "cycling": 2,
+    "walking": 11,
+    "hiking": 17,
+    "swimming": 5,
+    "training": 10,
+    "rowing": 14,
+    "boxing": 27,
+    "jump_rope": 30,
+    "mountaineering": 16,
+    "snowboarding": 20,
+    "basketball": 31,
+    "soccer": 34,
+    "tennis": 37,
+}
 
 MIN_DURATION_S = 60
 MIN_DISTANCE_M = 50
@@ -840,9 +889,8 @@ def generate_fit_bytes(workout: WorkoutInfo) -> Optional[bytes]:
     if not merged:
         return None
 
-    sport_code, sport_name = _FIT_SPORT.get(
-        workout.activity_type, _FIT_SPORT_DEFAULT
-    )
+    sport_name = _SPORT_MAP.get(workout.activity_type, _SPORT_DEFAULT)
+    activity_type_code = _ACTIVITY_TYPE_MAP.get(sport_name, 0)
     # garmin-fit-sdk Encoder expects FIT epoch seconds (since 1989-12-31)
     FIT_EPOCH = 631065600
     start_fit = int(workout.start_ts) - FIT_EPOCH
@@ -927,7 +975,7 @@ def generate_fit_bytes(workout: WorkoutInfo) -> Optional[bytes]:
         rec: dict = {
             'mesg_num': 20,
             'timestamp': int(pt.ts) - FIT_EPOCH,
-            'activity_type': sport_code,
+            'activity_type': activity_type_code,
         }
 
         if is_first:
