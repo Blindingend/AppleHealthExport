@@ -1,0 +1,17 @@
+{
+  "name": "coros-traininghub-cleanup",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Safe dry-run-first cleanup helper for COROS Training Hub activities.",
+  "bin": {
+    "coros-cleanup": "./coros-cleanup.js"
+  },
+  "scripts": {
+    "check": "node --check coros-cleanup.js",
+    "start": "node coros-cleanup.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}

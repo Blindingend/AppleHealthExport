@@ -1,3 +1,18 @@
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+
+# Generated Apple Health / workout exports
+apple_health_export/
+output_workouts/
+*.fit
+*.tcx
+*.zip
+__pycache__/
+
+# COROS cleanup tool runtime data
+tools/coros-cleanup/coros-cleanup-data/
+tools/coros-cleanup/*-dry-run*.json
+tools/coros-cleanup/*-backup*.json
+tools/coros-cleanup/*-log*.json
+tools/coros-cleanup/*.ndjson
